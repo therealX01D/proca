@@ -1,10 +1,11 @@
-from typing import Dict, List
+from typing import Dict, List, Any
 from .eventstore import EventStore
 from .circuit import CircuitBreaker
 from .core import StepExecution, ExecutionStatus
 from .step import Step
 from datetime import datetime
 import logging
+from .registry import registry, StepRegistryError
 
 class ProcessEngine:
     def __init__(self, event_store: EventStore = None):
@@ -12,7 +13,7 @@ class ProcessEngine:
         self.circuit_breakers: Dict[str, CircuitBreaker] = {}
         self.logger = logging.getLogger("process_engine")
 
-    async def execute_process(self, process_definition: Dict, context):
+    async def execute_process(self, process_definition: Dict[str, Any], context):
         process_name = process_definition.get("name", "unnamed_process")
         steps_config = process_definition.get("steps", [])
         self.logger.info(f"Starting process {process_name} with ID {context.process_id}")
@@ -39,7 +40,9 @@ class ProcessEngine:
     async def _execute_step_with_patterns(self, step: Step, context):
         circuit_breaker = self._get_circuit_breaker(step.step_id)
         if not circuit_breaker.can_execute():
-            execution_record = StepExecution(step_id=step.step_id, process_id=context.process_id, started_at=datetime.now(), completed_at=datetime.now(), status=ExecutionStatus.FAILED, error_message="Circuit breaker is OPEN")
+            execution_record = StepExecution(step_id=step.step_id, process_id=context.process_id,
+                                             started_at=datetime.now(), completed_at=datetime.now(),
+                                             status=ExecutionStatus.FAILED, error_message="Circuit breaker is OPEN")
             await self.event_store.store_execution(execution_record)
             return execution_record
 
@@ -92,27 +95,48 @@ class ProcessEngine:
             self.circuit_breakers[step_id] = CircuitBreaker()
         return self.circuit_breakers[step_id]
 
-    def _build_steps_from_config(self, steps_config):
-        # Minimal factory: expand to plugin registry later
-        from .steps.validation import ValidationStep
-        from .steps.command import CommandStep
-        from .steps.query import QueryStep
+    def _build_steps_from_config(self, steps_config: List[Dict[str, Any]]) -> List[Step]:
+        """Build steps using the global registry.
 
-        steps = []
-        for cfg in steps_config:
-            step_type = cfg["type"]
-            step_id = cfg["name"]
-            if step_type == "validation":
-                steps.append(ValidationStep(step_id, lambda ctx: True))
-            elif step_type == "command":
-                steps.append(CommandStep(step_id, lambda ctx: {"created": True}, cfg.get("dependencies", [])))
-            elif step_type == "query":
-                steps.append(QueryStep(step_id, lambda ctx: {"data": "queried"}))
-            else:
-                steps.append(CommandStep(step_id, lambda ctx: {"executed": True}))
+        Each step config entry should be a dict:
+          - name: <step_id>
+          - type: <registered_type_name>
+          - params: <optional dict passed to the constructor>
+
+        Example:
+        {
+          "name": "create_user",
+          "type": "command",
+          "params": {
+            "command_func": some_callable,
+            "dependencies": ["validate_email"],
+            "retry_count": 2
+          }
+        }
+        """
+        steps: List[Step] = []
+        for config in steps_config:
+            step_type = config.get("type")
+            step_id = config.get("name")
+            params = config.get("params", {})
+
+            if not step_type or not step_id:
+                raise ValueError("Each step config must include 'name' and 'type'")
+
+            try:
+                constructor = registry.get(step_type)
+            except StepRegistryError as e:
+                raise StepRegistryError(f"Step type '{step_type}' is not registered. Available types: {registry.list()}") from e
+
+            # call constructor with step_id and params
+            step_instance = constructor(step_id, **params)
+            if not isinstance(step_instance, Step):
+                raise TypeError(f"Constructor for '{step_type}' did not return a Step instance (got {type(step_instance)})")
+            steps.append(step_instance)
+
         return steps
 
-    def _resolve_dependencies(self, steps):
+    def _resolve_dependencies(self, steps: List[Step]) -> List[Step]:
         step_map = {s.step_id: s for s in steps}
         resolved = []
         unresolved = set(steps)
