@@ -49,3 +49,30 @@ class StepExecution:
     status: ExecutionStatus = ExecutionStatus.PENDING
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+class StepCreationError(Exception):
+    """Raised when step creation fails"""
+    pass
+
+class StepValidationError(Exception):
+    """Raised when step configuration validation fails"""
+    pass
+
+@dataclass
+class StepConfiguration:
+    """Comprehensive step configuration"""
+    name: str
+    type: str
+    step_class: Optional[str] = None  # Fully qualified class name
+    dependencies: List[str] = field(default_factory=list)
+    required_context: List[str] = field(default_factory=list)
+    optional_context: List[str] = field(default_factory=list)
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    retry_config: Dict[str, Any] = field(default_factory=dict)
+    timeout_seconds: Optional[int] = None
+    compensation_required: bool = False
+    parallel_execution: bool = False
+    async_execution: bool = False
+    optional: bool = False
+    critical: bool = False
+    validation_rules: List[Dict] = field(default_factory=list)
+    custom_config: Dict[str, Any] = field(default_factory=dict)
