@@ -1,46 +1,100 @@
-import asyncio
-from processor import ProcessEngine, EventStore, ProcessDefinitionLoader, Context, CommandStep, ValidationStep
+from proca.engine import ProcessEngine,ServiceLocator
+from .example_plugin import ExamplePlugin
+class MockEmailService:
+    async def send_email(self, template, recipient, data):
+        print(f" Sent email using template '{template}' to {recipient}")
 
-async def create_user(ctx):
-    return {"id": "user-123", "email": ctx.data["email"]}
+class MockDatabaseService:
+    async def execute_query(self, query, parameters=None, transaction=False):
+        print(f"  Executed query: {query} (transaction: {transaction})")
+        return {"affected_rows": 1}
 
-async def send_welcome(ctx):
-    # pretend send mail
-    return {"sent": True}
+class MockHttpClient:
+    async def request(self, method, url, headers=None, timeout=30):
+        print(f" HTTP {method} request to {url}")
+        return {"status": 200, "data": {"success": True}}
 
-async def main():
-    event_store = EventStore()
-    engine = ProcessEngine(event_store)
-
-    process_def = {
-        "name": "user_registration",
-        "steps": [
-            {"name": "validate_email", "type": "validation", "dependencies": []},
-            {"name": "create_user", "type": "command", "dependencies": ["validate_email"]},
-            {"name": "send_welcome_email", "type": "side_effect", "dependencies": ["create_user"]}
-        ]
-    }
-
-    ctx = Context()
-    ctx.data = {"email": "user@example.com", "name": "John Doe"}
-
-    # Build custom steps and run engine directly (recommended vs using minimal factory)
-    from processor.steps.validation import ValidationStep
-    from processor.steps.command import CommandStep
-    from processor.steps.query import QueryStep
-
-    steps = [
-        ValidationStep("validate_email", lambda ctx: "@" in ctx.data.get("email", "")),
-        CommandStep("create_user", create_user, dependencies=["validate_email"]),
-        CommandStep("send_welcome_email", send_welcome, dependencies=["create_user"])
+async def demonstrate_factory_system():
+    """Comprehensive demonstration of the factory system"""
+    
+    print("Step Factory System Demonstration")
+    print("=" * 50)
+    
+    # 1. Setup the system
+    service_locator = ServiceLocator()
+    engine = ProcessEngine(service_locator=service_locator)
+    
+    # 2. Register some services
+    service_locator.register_service("email_service", MockEmailService())
+    service_locator.register_service("database_service", MockDatabaseService())
+    service_locator.register_service("http_client", MockHttpClient())
+    
+    print(" System initialized with default steps and services")
+    
+    # 3. Show available steps
+    available_steps = engine.get_available_steps()
+    print(f"\nAvailable Steps ({len(available_steps)}):")
+    for name, info in available_steps.items():
+        print(f"  {name}: {info['description']} (category: {info['category']})")
+    
+    # 4. Load a plugin
+    plugin = ExamplePlugin()
+    engine.load_plugin(plugin)
+    print(f"\n Loaded plugin: {plugin.get_plugin_name()}")
+    
+    # 5. Create steps from configuration
+    step_configs = [
+        {
+            "name": "validate_input",
+            "type": "validation",
+            "parameters": {
+                "validation_func": "validate_email"
+            }
+        },
+        {
+            "name": "save_to_db",
+            "type": "database",
+            "dependencies": ["validate_input"],
+            "parameters": {
+                "query": "INSERT INTO users (email) VALUES (?)",
+                "transaction_required": True
+            }
+        },
+        {
+            "name": "send_welcome",
+            "type": "email",
+            "dependencies": ["save_to_db"],
+            "parameters": {
+                "template": "welcome_email"
+            }
+        },
+        {
+            "name": "custom_step",
+            "type": "custom_validation",  # From plugin
+            "dependencies": []
+        }
     ]
+    
+    print(f"\n Creating {len(step_configs)} steps from configuration...")
+    
+    steps = engine.factory.create_steps_from_config_list(step_configs)
+    
+    for step in steps:
+        print(f"   Created: {step.step_id} ({type(step).__name__})")
+    
+    # 6. Show step metadata
+    print(f"\n Step Metadata Examples:")
+    for step_name in ["validation", "database", "email"]:
+        metadata = engine.registry.get_metadata(step_name)
+        print(f"  • {step_name}:")
+        print(f"    - Required services: {metadata.required_services}")
+        print(f"    - Supported types: {[t.value for t in metadata.supported_types]}")
+        print(f"    - Schema: {metadata.configuration_schema}")
+    
+    print(f"\n Factory system demonstration completed!")
 
-    # bypass engine factory for demo: monkeypatch engine._build_steps_from_config
-    engine._build_steps_from_config = lambda cfg: steps
-    res_ctx = await engine.execute_process(process_def, ctx)
-    print(res_ctx.data)
-    events = await event_store.get_process_history(res_ctx.process_id)
-    print(len(events), "events")
+# Mock services for demonstration
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+    asyncio.run(demonstrate_factory_system())
