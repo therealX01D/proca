@@ -8,7 +8,7 @@ from .circuit import CircuitBreaker
 from .engine import ProcessEngine
 from .loader import ProcessDefinitionLoader
 from .adapters import FrameworkAdapter, DjangoAdapter
-from .registry import registry  # <-- exported for plugin registration
+from .registry import StepRegistry  # <-- exported for plugin registration
 
 __all__ = [
     "Context", "StepResult", "StepExecution", "ExecutionStatus", "StepType", "CircuitStatus",
@@ -16,5 +16,5 @@ __all__ = [
     "ValidationStep", "CommandStep", "QueryStep",
     "EventStore", "CircuitBreaker", "ProcessEngine",
     "ProcessDefinitionLoader", "FrameworkAdapter", "DjangoAdapter",
-    "registry"
+    "StepRegistry"
 ]
